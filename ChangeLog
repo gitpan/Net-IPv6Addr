@@ -1,3 +1,8 @@
+2002-05-03	Tony Monroe <tmonroe+perl@nog.net>	(0.2)
+
+	* Many patches from Jyrki Soini <jyrki.soini@sonera.com>,
+	  fixing bugs and adding features!
+
 2001-07-20	Tony Monroe <tmonroe+perl@nog.net>	(0.1)
 
 	* Based on Net::IPv4Addr version 0.10.

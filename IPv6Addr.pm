@@ -9,7 +9,7 @@ use Net::IPv4Addr;
 BEGIN {
     eval { 
 	require Math::BigInt;
-	require Math::Base85; 
+	require Math::Base85;
     };
 }
 
@@ -45,7 +45,7 @@ The public interface of this module is rather small.
 @EXPORT = qw();
 @EXPORT_OK = qw();
 
-$VERSION = '0.1';
+$VERSION = '0.2';
 
 # We get these formats from rfc1884:
 #
@@ -64,8 +64,8 @@ $VERSION = '0.1';
 #
 
 my %ipv6_patterns = (
-    'preferred' => [ 
-	qr/^(?:[a-f0-9]{1,4}:){7}[a-f0-9]{1,4}$/i, 
+    'preferred' => [
+	qr/^(?:[a-f0-9]{1,4}:){7}[a-f0-9]{1,4}$/i,
 	\&ipv6_parse_preferred,
     ],
     'compressed' => [		## No, this isn't pretty.
@@ -97,12 +97,11 @@ if (defined $Math::Base85::base85_digits) {
     ($digits = $Math::Base85::base85_digits) =~ s/-//;
     my $x = "[" . $digits . "-]";
     my $n = "{20}";
-    $ipv6_patterns{'base85'} = [ 
-	qr/$x$n/, 
-	\&ipv6_parse_base85, 
+    $ipv6_patterns{'base85'} = [
+	qr/$x$n/,
+	\&ipv6_parse_base85,
     ];
 }
-
 
 =pod
 
@@ -179,11 +178,63 @@ sub ipv6_parse
 
     if (defined $pfx) {
 	if ($pfx =~ /^\d+$/) {
-	    if (($pfx < 0)  || ($pfx > 64)) {
+	    if (($pfx < 0)  || ($pfx > 128)) {
 		croak __PACKAGE__, "::ipv6_parse -- invalid prefix length $pfx\n";
 	    }
 	} else {
 	    croak __PACKAGE__, "::ipv6_parse -- non-numeric prefix length $pfx\n";
+	}
+    } else {
+	return $ip;
+    }
+    wantarray ? ($ip, $pfx) : "$ip/$pfx";
+}
+
+=pod
+
+=head1 is_ipv6
+
+=head2 Parameters
+
+A string containing an IPv6 address string.  Optionally, it may
+also include a C</> character, and a numeric prefix length, in that
+order.
+
+	-or-
+
+An IPv6 address string.  Optionally, a numeric prefix length.
+
+=head2 Returns
+
+What you gave it, more or less, if it does parse out correctly,
+otherwise returns undef.
+=head2 Notes
+
+This is not an object method or class method; it is just a subroutine.
+
+=cut
+
+sub is_ipv6
+{
+    my ($ip, $pfx);
+    if (@_ == 2) {
+	($ip, $pfx) = @_;
+    } else {
+	($ip, $pfx) = split(m!/!, $_[0])
+    }
+
+    unless (ipv6_chkip($ip)) {
+	return undef;
+    }
+
+    if (defined $pfx) {
+        $pfx =~ s/s+//g;
+	if ($pfx =~ /^\d+$/) {
+	    if (($pfx < 0)  || ($pfx > 128)) {
+               return undef;
+	    }
+	} else {
+            return undef;
 	}
     } else {
 	return $ip;
@@ -331,9 +382,11 @@ sub ipv6_parse_base85
 	unshift @result, sprintf("%d", $r);
 	$bigint = $bigint >> 16;
     }
+    foreach $r ($#result+1..7) {
+        $result[$r] = 0;
+    }
     return @result;
 }
-
 
 =pod
 
@@ -392,7 +445,18 @@ sub to_string_compressed
     my $expanded = join(":", map { sprintf("%x", $_) } @$self);
     $expanded =~ s/^0:/:/;
     $expanded =~ s/:0/:/g;
-    $expanded =~ s/:{3,7}/::/;
+    if ($expanded =~ s/:::::::/_/ or
+	$expanded =~ s/::::::/_/ or
+	$expanded =~ s/:::::/_/ or
+	$expanded =~ s/::::/_/ or
+	$expanded =~ s/:::/_/ or
+	$expanded =~ s/::/_/
+        ) {
+        $expanded =~ s/:(?=:)/:0/g;
+	$expanded =~ s/^:(?=[0-9a-f])/0:/;
+	$expanded =~ s/([0-9a-f]):$/$1:0/;
+	$expanded =~ s/_/::/;
+    }
     return $expanded;
 }
 
@@ -513,6 +577,97 @@ sub to_string_base85
 
 =pod
 
+=head1 to_bigint
+
+=head2 Parameters
+
+If used as an object method, none; if used as a plain old subroutine,
+an IPv6 address string in any format.
+
+=head2 Returns
+
+The BigInt representation of IPv6 address.
+
+=head2 Notes
+
+Invalid input will generate an exception.
+
+=cut
+
+sub to_bigint
+{
+    croak __PACKAGE__, "::to_bigint -- Math::BigInt not loaded" unless defined &Math::BigInt::new;
+    my $self = shift;
+    if (ref $self ne __PACKAGE__) {
+	return Net::IPv6Addr->new($self)->to_bigint();
+    }
+    my $bigint = new Math::BigInt("0");
+    for my $i (@{$self}[0..6]) {
+	$bigint = $bigint + $i;
+	$bigint = $bigint << 16;
+    }
+    $bigint = $bigint + $self->[7];
+    $bigint =~ s/\+//;
+    return  $bigint;
+}
+
+=pod
+
+=head1 to_array
+
+=head2 Parameters
+
+If used as an object method, none; if used as a plain old subroutine,
+an IPv6 address string in any format.
+
+=head2 Returns
+
+An array [0..7] of 16 bit hexadecimal numbers.
+
+=head2 Notes
+
+Invalid input will generate an exception.
+
+=cut
+
+sub to_array
+{
+    my $self = shift;
+    if (ref $self ne __PACKAGE__) {
+	return Net::IPv6Addr->new($self)->to_array();
+    }
+    return map {sprintf "%04x", $_} @$self;
+}
+=pod
+
+=head1 to_intarray
+
+=head2 Parameters
+
+If used as an object method, none; if used as a plain old subroutine,
+an IPv6 address string in any format.
+
+=head2 Returns
+
+An array [0..7] of decimal numbers.
+
+=head2 Notes
+
+Invalid input will generate an exception.
+
+=cut
+
+sub to_intarray
+{
+    my $self = shift;
+    if (ref $self ne __PACKAGE__) {
+	return Net::IPv6Addr->new($self)->to_intarray();
+    }
+    return @$self;
+}
+
+=pod
+
 =head1 to_string_ip6_int
 
 =head2 Parameters
@@ -542,6 +697,111 @@ sub to_string_ip6_int
     return $ptr . ".";
 }
 
+
+=pod
+
+=head1 in_network_of_size
+
+=head2 Parameters
+
+If used as an object method, network size in bits
+
+If used as a plain old subroutine, an IPv6 address string in any format
+and network size in bits. Network size may be given with / notation.
+
+=head2 Returns
+
+Network IPv6Addr of given size.
+
+=head2 Notes
+
+Invalid input will generate an exception.
+
+=cut
+
+sub in_network_of_size
+{
+    my $self = shift;
+    if (ref $self ne __PACKAGE__) {
+      if ($self =~ m!(.+)/(.+)!) {
+	unshift @_, $2;
+	return Net::IPv6Addr->new($1)->in_network_of_size(@_)->to_string_preferred;
+      }
+      return Net::IPv6Addr->new($self)->in_network_of_size(@_)->to_string_preferred;
+    }
+    my $netsize = shift;
+    if (!defined $netsize) {
+      croak __PACKAGE__, "::in_network_of_size -- not network size given";
+    }
+    $netsize =~ s!/!!;
+    if ($netsize !~ /^\d+$/ or $netsize < 0 or $netsize > 128) {
+      croak __PACKAGE__, "::in_network_of_size -- not valid network size $netsize";
+    }
+    my @parts = @$self;
+    my $i = $netsize / 16;
+    unless ($i == 8) { # netsize was 128 bits; the whole address
+      my $j = $netsize % 16;
+      $parts[$i] &= unpack("C4",pack("B16", '1' x $j . '0000000000000000'));
+      foreach $j (++$i..$#parts) {
+	$parts[$j] = 0;
+      }
+    }
+    return Net::IPv6Addr->new(join(':', @parts));
+}
+
+=pod
+
+=head1 in_network
+
+=head2 Parameters
+
+If used as an object method, network and its size in bits
+
+If used as a plain old subroutine, an IPv6 address string in any format
+network address string and size in bits.
+Network size may be given with / notation.
+
+=head2 Returns
+
+Something true, if address is member of the network, false otherwise.
+
+=head2 Notes
+
+Invalid input will generate an exception.
+
+=cut
+
+sub in_network
+{
+    my $self = shift;
+    if (ref $self ne __PACKAGE__) {
+      return Net::IPv6Addr->new($self)->in_network(@_);
+    }
+    my ($net,$netsize) = (@_);
+    if ($net =~ m!/!) {
+      $net =~ s!(.*)/(.*)!$1!;
+      $netsize = $2;
+    }
+    unless (defined $netsize) {
+      croak __PACKAGE__, "::in_network -- not enough parameters";
+    }
+    $netsize =~ s!/!!;
+    if ($netsize !~ /^\d+$/ or $netsize < 0 or $netsize > 128) {
+      croak __PACKAGE__, "::in_network -- not valid network size $netsize";
+    }
+    my @s = $self->in_network_of_size($netsize)->to_intarray;
+    $net = Net::IPv6Addr->new($net) unless (ref $net);
+    my @n = $net->in_network_of_size($netsize)->to_intarray;
+    my $i = int($netsize / 16);
+    $i++;
+    $i = $#s if ($i > $#s);
+    for (0..$i) {
+      return 0 unless ($s[$_] == $n[$_]);
+    }
+    return 1;
+}
+
+
 1;
 __END__
 
@@ -549,21 +809,24 @@ __END__
 
 =head1 BUGS
 
-None reported yet.  Therefore there are none. :-)
+probably exist in this module.  Please report them.
 
 =head1 AUTHOR
 
-Tony Monroe E<lt>tmonroe+perl@nog.netE<gt>
+Tony Monroe E<lt>tmonroe plus perl at nog dot netE<gt>.
 
 The module's interface probably looks like it vaguely resembles
-Net::IPv4Addr by Francis J. Lacoste E<lt>francis.lacoste@iNsu.COME<gt>
+Net::IPv4Addr by Francis J. Lacoste E<lt>francis dot lacoste at
+iNsu dot COME<gt>.
 
+Some fixes and subroutines from Jyrki Soini E<lt>jyrki dot soini
+at sonera dot comE<gt>.
 
 =head1 HISTORY
 
 This was originally written to simplify the task of maintaining
 DNS records after I set myself up with Freenet6.  Interesting that
-there's really only one DNS-related subroutine in here :-)
+there's really only one DNS-related subroutine in here.
 
 =head1 SEE ALSO
 
